@@ -49,6 +49,7 @@ bool camera_sign = false;          // Check camera status
 bool sd_sign = false;              // Check storage status
 bool wifi_connected = false;       // WiFi connection status
 String pokemonName = "";           // Store recognized Pokemon name
+bool paused = false;               // Pause state after taking photo
 
 TFT_eSPI tft = TFT_eSPI();
 ArduinoGPTChat chat(apiKey);
@@ -208,75 +209,99 @@ void setup() {
 
 void loop() {
   if( sd_sign && camera_sign){
-
-    // Take a photo
-    camera_fb_t *fb = esp_camera_fb_get();
-    if (!fb) {
-      Serial.println("Failed to get camera frame buffer");
-      return;
+    if (!paused) {
+      // Take a photo only when not paused
+      camera_fb_t *fb = esp_camera_fb_get();
+      if (!fb) {
+        Serial.println("Failed to get camera frame buffer");
+        return;
+      }
+      
+      // Display live preview
+      uint8_t* buf = fb->buf;
+      uint32_t len = fb->len;
+      tft.startWrite();
+      tft.setAddrWindow(70, 0, 100, 100);
+      for(int y = 0; y < 100; y++) {
+          tft.pushColors(buf + y * camera_width * 2 + 70 * 2, 100 * 2);
+      }
+      tft.endWrite();
+      
+      // Release image buffer
+      esp_camera_fb_return(fb);
     }
-    
+
+    // Check for touch to take photo or resume
     if(display_is_pressed()){
-      Serial.println("display is touched");
-      char filename[32];
-      strcpy(filename, IMAGE_FILENAME);
-      
-      // Save photo to file
-      size_t out_len = 0;
-      uint8_t* out_buf = NULL;
-      esp_err_t ret = frame2jpg(fb, 255, &out_buf, &out_len);
-      if (ret == false) {
-        Serial.printf("JPEG conversion failed");
-      } else {
-      // 保存图片到Flash
-      fs::File file = SPIFFS.open(filename, FILE_WRITE);
-      if(!file){
-        Serial.println("Failed to open file for writing");
-      } else {
-        if(file.write(out_buf, out_len) == out_len){
-          Serial.printf("Saved picture to Flash: %s\n", filename);
-          file.close();
-          
-          // 确保文件完全写入Flash，添加延时
-          delay(100);
-          
-          // 立即分析刚保存的图片
-          analyzeImageWithGPT(filename);
-          
-        } else {
-          Serial.println("Write failed");
-          file.close();
+      if (!paused) {
+        // Take photo and analyze
+        Serial.println("Taking photo...");
+        camera_fb_t *fb = esp_camera_fb_get();
+        if (!fb) {
+          Serial.println("Failed to get camera frame buffer");
+          return;
         }
-      }
-      free(out_buf);
-      
-      // 打印内存使用情况
-      printMemoryUsage();
+        
+        char filename[32];
+        strcpy(filename, IMAGE_FILENAME);
+        
+        // Save photo to file
+        size_t out_len = 0;
+        uint8_t* out_buf = NULL;
+        esp_err_t ret = frame2jpg(fb, 255, &out_buf, &out_len);
+        if (ret == false) {
+          Serial.printf("JPEG conversion failed");
+        } else {
+          fs::File file = SPIFFS.open(filename, FILE_WRITE);
+          if(!file){
+            Serial.println("Failed to open file for writing");
+          } else {
+            if(file.write(out_buf, out_len) == out_len){
+              Serial.printf("Saved picture to Flash: %s\n", filename);
+              file.close();
+              
+              delay(100); // Ensure file is fully written
+              
+              analyzeImageWithGPT(filename);
+              
+              // Display captured image
+              tft.startWrite();
+              tft.setAddrWindow(70, 0, 100, 100);
+              for(int y = 0; y < 100; y++) {
+                  tft.pushColors(fb->buf + y * camera_width * 2 + 70 * 2, 100 * 2);
+              }
+              tft.endWrite();
+              
+              // Display recognition result
+              if(pokemonName.length() > 0) {
+                  pokemonName.toLowerCase();
+                  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+                  tft.setTextSize(2);
+                  tft.setCursor(0, 100);
+                  tft.println(pokemonName);
+              }
+              
+              // Enter paused state
+              paused = true;
+            } else {
+              Serial.println("Write failed");
+              file.close();
+            }
+          }
+          free(out_buf);
+          printMemoryUsage();
+        }
+        esp_camera_fb_return(fb);
+      } else {
+        // Resume from paused state
+        Serial.println("Resuming capture...");
+        paused = false;
+        pokemonName = ""; // Clear previous result
+        // Clear the text display area
+        tft.fillRect(0, 100, tft.width(), tft.fontHeight()*2, TFT_BLACK);
       }
     }
-  
-    // Display image centered at top (100x100)
-    uint8_t* buf = fb->buf;
-    uint32_t len = fb->len;
-    tft.startWrite();
-    tft.setAddrWindow(70, 0, 100, 100);
-    for(int y = 0; y < 100; y++) {
-        tft.pushColors(buf + y * camera_width * 2 + 70 * 2, 100 * 2);
-    }
-    tft.endWrite();
     
-    // Display recognition result at line 100
-    if(pokemonName.length() > 0) {
-        pokemonName.toLowerCase();
-        tft.setTextColor(TFT_WHITE, TFT_BLACK);
-        tft.setTextSize(2);
-        tft.setCursor(0, 100);
-        tft.println(pokemonName);
-    }
-      
-    // Release image buffer
-    esp_camera_fb_return(fb);
-
     delay(10);
   }
 }
