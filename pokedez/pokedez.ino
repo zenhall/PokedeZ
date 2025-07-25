@@ -44,7 +44,7 @@ const int camera_width = 240;
 const int camera_height = 240;
 
 // File Counter
-int imageCount = 1;
+const char* IMAGE_FILENAME = "/current.jpg";
 bool camera_sign = false;          // Check camera status
 bool sd_sign = false;              // Check storage status
 bool wifi_connected = false;       // WiFi connection status
@@ -53,59 +53,6 @@ String pokemonName = "";           // Store recognized Pokemon name
 TFT_eSPI tft = TFT_eSPI();
 ArduinoGPTChat chat(apiKey);
 
-// 扫描SPIFFS中已有的图片文件，找到最大编号
-void findMaxImageNumber() {
-    int maxNumber = 0;
-    
-    // 打开根目录
-    File root = SPIFFS.open("/");
-    if (!root) {
-        Serial.println("Failed to open directory");
-        return;
-    }
-    
-    if (!root.isDirectory()) {
-        Serial.println("Not a directory");
-        return;
-    }
-    
-    // 遍历目录中的所有文件
-    File file = root.openNextFile();
-    while (file) {
-        String fileName = file.name();
-        Serial.printf("Found file: %s\n", fileName.c_str());
-        
-        // 检查文件名是否符合 "imageXX.jpg" 格式（支持有无前导斜杠的情况）
-        bool isImageFile = false;
-        String numberStr = "";
-        
-        if (fileName.startsWith("/image") && fileName.endsWith(".jpg")) {
-            // 有前导斜杠的情况：/imageXX.jpg
-            numberStr = fileName.substring(6); // 去掉 "/image" 前缀
-            numberStr = numberStr.substring(0, numberStr.length() - 4); // 去掉 ".jpg" 后缀
-            isImageFile = true;
-        } else if (fileName.startsWith("image") && fileName.endsWith(".jpg")) {
-            // 无前导斜杠的情况：imageXX.jpg
-            numberStr = fileName.substring(5); // 去掉 "image" 前缀
-            numberStr = numberStr.substring(0, numberStr.length() - 4); // 去掉 ".jpg" 后缀
-            isImageFile = true;
-        }
-        
-        if (isImageFile && numberStr.length() > 0) {
-            int number = numberStr.toInt();
-            if (number > 0 && number > maxNumber) { // 确保是有效的正数
-                maxNumber = number;
-            }
-            Serial.printf("Extracted number: %d, current max: %d\n", number, maxNumber);
-        }
-        
-        file = root.openNextFile();
-    }
-    
-    // 设置下一个文件编号
-    imageCount = maxNumber + 1;
-    Serial.printf("Next image will be saved as: image%d.jpg\n", imageCount);
-}
 
 // 打印内存使用情况
 void printMemoryUsage() {
@@ -166,7 +113,7 @@ void analyzeImageWithGPT(const char* filename) {
     Serial.printf("Sending image %s to GPT for analysis...\n", filename);
     
     // 发送图片和问题给GPT
-    String response = chat.sendImageMessage(filename, "请识别一下这是什么神奇宝贝Pokemon，无论是否相像，都输出结果，输出英文名。");
+    String response = chat.sendImageMessage(filename, "Identify what pokemon this is and respond with only the English name in lowercase, no other text or punctuation.");
     
     // 输出识别结果
     Serial.println("=== GPT Analysis Result ===");
@@ -241,7 +188,7 @@ void setup() {
     // 显示屏初始化
     tft.init();
     tft.setRotation(1);
-    tft.fillScreen(TFT_WHITE);
+    tft.fillScreen(TFT_BLACK);
 
     // 初始化SPIFFS
     if(!SPIFFS.begin(true)){
@@ -251,8 +198,7 @@ void setup() {
     sd_sign = true;
     Serial.println("SPIFFS initialized");
     
-    // 扫描已有文件，设置正确的文件编号
-    findMaxImageNumber();
+    // 使用固定文件名
     
     // 打印初始内存使用情况
     printMemoryUsage();
@@ -273,7 +219,7 @@ void loop() {
     if(display_is_pressed()){
       Serial.println("display is touched");
       char filename[32];
-      sprintf(filename, "/image%d.jpg", imageCount);
+      strcpy(filename, IMAGE_FILENAME);
       
       // Save photo to file
       size_t out_len = 0;
@@ -297,7 +243,6 @@ void loop() {
           // 立即分析刚保存的图片
           analyzeImageWithGPT(filename);
           
-          imageCount++;
         } else {
           Serial.println("Write failed");
           file.close();
@@ -320,11 +265,12 @@ void loop() {
     }
     tft.endWrite();
     
-    // Display Pokemon name in top-right quadrant
+    // Display recognition result at line 100
     if(pokemonName.length() > 0) {
-        tft.setTextColor(TFT_BLACK, TFT_WHITE);
+        pokemonName.toLowerCase();
+        tft.setTextColor(TFT_WHITE, TFT_BLACK);
         tft.setTextSize(2);
-        tft.setCursor(120, 0);
+        tft.setCursor(0, 100);
         tft.println(pokemonName);
     }
       
