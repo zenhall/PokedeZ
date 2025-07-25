@@ -10,6 +10,7 @@
 #include "SPIFFS.h"
 #include <WiFi.h>
 #include "ArduinoGPTChat.h"
+#include "pokemon_data.h"
 
 #define CAMERA_MODEL_XIAO_ESP32S3 // Has PSRAM
 #define TOUCH_INT D7
@@ -53,6 +54,27 @@ bool paused = false;               // Pause state after taking photo
 
 TFT_eSPI tft = TFT_eSPI();
 ArduinoGPTChat chat(apiKey);
+
+// Pokemon数据库函数实现
+const PokemonData* getPokemonByNumber(uint16_t number) {
+    for (int i = 0; i < POKEMON_COUNT; i++) {
+        if (pgm_read_word(&pokemon_database[i].number) == number) {
+            return &pokemon_database[i];
+        }
+    }
+    return nullptr;
+}
+
+const PokemonData* getPokemonByIndex(uint16_t index) {
+    if (index < POKEMON_COUNT) {
+        return &pokemon_database[index];
+    }
+    return nullptr;
+}
+
+void drawPokemonImage(int16_t x, int16_t y, const uint16_t* image_data) {
+    tft.pushImage(x, y, IMAGE_WIDTH, IMAGE_HEIGHT, image_data);
+}
 
 
 // 打印内存使用情况
@@ -104,7 +126,7 @@ void analyzeImageWithGPT(const char* filename) {
         Serial.println("WiFi not connected, cannot analyze image");
         return;
     }
-    
+
     // 检查文件是否存在
     if(!SPIFFS.exists(filename)) {
         Serial.printf("Cannot find %s in flash\n", filename);
@@ -112,22 +134,133 @@ void analyzeImageWithGPT(const char* filename) {
     }
 
     Serial.printf("Sending image %s to GPT for analysis...\n", filename);
-    
+
     // 发送图片和问题给GPT
     String response = chat.sendImageMessage(filename, "Identify what pokemon this is and respond with only the English name in lowercase, no other text or punctuation.");
-    
+
     // 输出识别结果
     Serial.println("=== GPT Analysis Result ===");
     Serial.println(response);
     Serial.println("=========================");
     // Extract Pokemon name from response
     pokemonName = response;
+    pokemonName.trim();
+    pokemonName.toLowerCase();
+
     // Clean up response to just show Pokemon name
-    int startIdx = pokemonName.indexOf("Pokemon: ");
+    int startIdx = pokemonName.indexOf("pokemon: ");
     if(startIdx != -1) {
         pokemonName = pokemonName.substring(startIdx + 9);
         pokemonName.trim();
     }
+}
+
+// 根据Pokemon名称查找并显示图片
+void displayPokemonImage(String name) {
+    if (name.length() == 0) {
+        return;
+    }
+
+    // 清理名称，移除特殊字符，与头文件生成器保持一致
+    name.toLowerCase();
+    name.replace("♀", "female");
+    name.replace("♂", "male");
+    name.replace(" ", "");
+    name.replace("-", "");
+    name.replace(".", "");
+    name.replace("'", "");
+    name.replace("(", "");
+    name.replace(")", "");
+
+    Serial.printf("Looking for Pokemon: %s\n", name.c_str());
+
+    // 遍历Pokemon数据库查找匹配的名称
+    for (int i = 0; i < POKEMON_COUNT; i++) {
+        const PokemonData* pokemon = getPokemonByIndex(i);
+        if (pokemon != nullptr) {
+            String pokemonName = readStringFromProgmem(pokemon->name);
+            pokemonName.toLowerCase();
+            pokemonName.replace("♀", "female");
+            pokemonName.replace("♂", "male");
+            pokemonName.replace(" ", "");
+            pokemonName.replace("-", "");
+            pokemonName.replace(".", "");
+            pokemonName.replace("'", "");
+            pokemonName.replace("(", "");
+            pokemonName.replace(")", "");
+
+            if (pokemonName.equals(name) || pokemonName.indexOf(name) >= 0 || name.indexOf(pokemonName) >= 0) {
+                Serial.printf("Found Pokemon #%d: %s\n",
+                             pgm_read_word(&pokemon->number),
+                             readStringFromProgmem(pokemon->name).c_str());
+
+                // 在指定位置(40,160)显示Pokemon图片
+                drawPokemonImage(40, 160, pokemon->image_data);
+
+                // 显示Pokemon信息
+                displayPokemonInfo(pokemon, 100, 160);
+                return;
+            }
+        }
+    }
+
+    Serial.printf("Pokemon not found: %s\n", name.c_str());
+}
+
+// 显示Pokemon信息
+void displayPokemonInfo(const PokemonData* pokemon, int x, int y) {
+    if (pokemon == nullptr) return;
+
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setTextSize(1);
+
+    // 显示编号和名称
+    String pokemonName = readStringFromProgmem(pokemon->name);
+    uint16_t number = pgm_read_word(&pokemon->number);
+
+    tft.setCursor(x, y);
+    tft.printf("#%d %s", number, pokemonName.c_str());
+
+    // 显示类型
+    String type1 = readStringFromProgmem(pokemon->type1);
+    String type2 = readStringFromProgmem(pokemon->type2);
+
+    tft.setCursor(x, y + 15);
+    tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+    if (type1.length() > 0) {
+        tft.print(type1);
+        if (type2.length() > 0) {
+            tft.print("/");
+            tft.print(type2);
+        }
+    }
+
+    // 显示数值
+    uint16_t hp = pgm_read_word(&pokemon->hp);
+    uint16_t attack = pgm_read_word(&pokemon->attack);
+    uint16_t defense = pgm_read_word(&pokemon->defense);
+
+    tft.setCursor(x, y + 30);
+    tft.setTextColor(TFT_CYAN, TFT_BLACK);
+    tft.printf("HP:%d ATK:%d DEF:%d", hp, attack, defense);
+}
+
+// 从PROGMEM读取字符串
+String readStringFromProgmem(const char* progmemStr) {
+    if (progmemStr == nullptr) {
+        return "";
+    }
+
+    String result = "";
+    char c;
+    int i = 0;
+
+    while ((c = pgm_read_byte(progmemStr + i)) != 0) {
+        result += c;
+        i++;
+    }
+
+    return result;
 }
 
 void setup() {
@@ -272,13 +405,16 @@ void loop() {
               }
               tft.endWrite();
               
-              // Display recognition result
+              // Display recognition result and Pokemon image
               if(pokemonName.length() > 0) {
                   pokemonName.toLowerCase();
                   tft.setTextColor(TFT_WHITE, TFT_BLACK);
                   tft.setTextSize(2);
                   tft.setCursor(0, 100);
                   tft.println(pokemonName);
+
+                  // 显示Pokemon图片和信息
+                  displayPokemonImage(pokemonName);
               }
               
               // Enter paused state
@@ -297,8 +433,8 @@ void loop() {
         Serial.println("Resuming capture...");
         paused = false;
         pokemonName = ""; // Clear previous result
-        // Clear the text display area
-        tft.fillRect(0, 100, tft.width(), tft.fontHeight()*2, TFT_BLACK);
+        // Clear the display area (text and Pokemon image area)
+        tft.fillRect(0, 100, tft.width(), tft.height() - 100, TFT_BLACK);
       }
     }
     
