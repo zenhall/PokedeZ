@@ -50,7 +50,7 @@ bool camera_sign = false;          // Check camera status
 bool sd_sign = false;              // Check storage status
 bool wifi_connected = false;       // WiFi connection status
 String pokemonName = "";           // Store recognized Pokemon name
-bool paused = false;               // Pause state after taking photo
+int display_mode = 0;               // 0: fullscreen, 1: analysis view
 
 TFT_eSPI tft = TFT_eSPI();
 ArduinoGPTChat chat(apiKey);
@@ -136,7 +136,7 @@ void analyzeImageWithGPT(const char* filename) {
     Serial.printf("Sending image %s to GPT for analysis...\n", filename);
 
     // 发送图片和问题给GPT
-    String response = chat.sendImageMessage(filename, "Identify what pokemon this is and respond with only the English name in lowercase, no other text or punctuation.");
+    String response = chat.sendImageMessage(filename, "Identify what pokemon this is and respond with only the English name in lowercase, no other text or punctuation.If the target is not a Pokémon, output the name of the Pokémon most similar to the target.");
 
     // 输出识别结果
     Serial.println("=== GPT Analysis Result ===");
@@ -342,31 +342,27 @@ void setup() {
 
 void loop() {
   if( sd_sign && camera_sign){
-    if (!paused) {
-      // Take a photo only when not paused
+    if (display_mode == 0) {  // Fullscreen mode
+      // Display full-screen live preview
       camera_fb_t *fb = esp_camera_fb_get();
       if (!fb) {
         Serial.println("Failed to get camera frame buffer");
         return;
       }
       
-      // Display live preview
       uint8_t* buf = fb->buf;
       uint32_t len = fb->len;
       tft.startWrite();
-      tft.setAddrWindow(70, 0, 100, 100);
-      for(int y = 0; y < 100; y++) {
-          tft.pushColors(buf + y * camera_width * 2 + 70 * 2, 100 * 2);
-      }
+      tft.setAddrWindow(0, 0, camera_width, camera_height);
+      tft.pushColors(buf, len);
       tft.endWrite();
       
-      // Release image buffer
       esp_camera_fb_return(fb);
     }
 
-    // Check for touch to take photo or resume
+    // Check for touch to toggle display mode
     if(display_is_pressed()){
-      if (!paused) {
+      if (display_mode == 0) {  // Currently in fullscreen mode
         // Take photo and analyze
         Serial.println("Taking photo...");
         camera_fb_t *fb = esp_camera_fb_get();
@@ -397,28 +393,49 @@ void loop() {
               
               analyzeImageWithGPT(filename);
               
-              // Display captured image
-              tft.startWrite();
-              tft.setAddrWindow(70, 0, 100, 100);
-              for(int y = 0; y < 100; y++) {
-                  tft.pushColors(fb->buf + y * camera_width * 2 + 70 * 2, 100 * 2);
+              // Create resized 120x120 image buffer in PSRAM
+              uint16_t* resized = (uint16_t*)ps_malloc(120*120*sizeof(uint16_t));
+              if(resized == NULL) {
+                Serial.println("Failed to allocate PSRAM for resized image");
+                return;
               }
+              
+              for(int y = 0; y < 120; y++) {
+                for(int x = 0; x < 120; x++) {
+                  // Get the 16-bit pixel value (RGB565) from original image
+                  uint16_t pixel = *((uint16_t*)&fb->buf[((y*2)*240 + (x*2)) * 2]);
+                  
+                  // Apply byte swap as done in generate_arduino_header.py
+                  resized[y*120 + x] = (pixel >> 8) | (pixel << 8);
+                }
+              }
+
+              // Clear screen
+              tft.fillScreen(TFT_BLACK);
+
+              // Display resized image centered at top (60,0)
+              tft.startWrite();
+              tft.setAddrWindow(60, 0, 120, 120);
+              tft.pushColors(resized, 120*120);
               tft.endWrite();
+              
+              // Free PSRAM buffer
+              free(resized);
               
               // Display recognition result and Pokemon image
               if(pokemonName.length() > 0) {
                   pokemonName.toLowerCase();
                   tft.setTextColor(TFT_WHITE, TFT_BLACK);
                   tft.setTextSize(2);
-                  tft.setCursor(0, 100);
+                  tft.setCursor(0, 130);  // Moved down to make room for image
                   tft.println(pokemonName);
 
                   // 显示Pokemon图片和信息
                   displayPokemonImage(pokemonName);
               }
               
-              // Enter paused state
-              paused = true;
+              // Switch to analysis view
+              display_mode = 1;
             } else {
               Serial.println("Write failed");
               file.close();
@@ -428,13 +445,11 @@ void loop() {
           printMemoryUsage();
         }
         esp_camera_fb_return(fb);
-      } else {
-        // Resume from paused state
-        Serial.println("Resuming capture...");
-        paused = false;
+      } else {  // Currently in analysis mode
+        // Switch back to fullscreen mode
+        Serial.println("Returning to fullscreen mode...");
+        display_mode = 0;
         pokemonName = ""; // Clear previous result
-        // Clear the display area (text and Pokemon image area)
-        tft.fillRect(0, 100, tft.width(), tft.height() - 100, TFT_BLACK);
       }
     }
     
