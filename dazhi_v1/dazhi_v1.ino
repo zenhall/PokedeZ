@@ -4,9 +4,9 @@
 #include "ESP_I2S.h"
 
 // 定义I2S引脚（用于音频输出）
-#define I2S_DOUT D2
-#define I2S_BCLK D1
-#define I2S_LRC D0
+#define I2S_DOUT D0
+#define I2S_BCLK D2
+#define I2S_LRC D1
 
 // 定义麦克风输入引脚
 #define MIC_DATA_PIN 42

@@ -11,9 +11,16 @@
 #include <WiFi.h>
 #include "ArduinoGPTChat.h"
 #include "pokemon_data.h"
+#include "Audio.h"
+#include "ESP_I2S.h"
 
 #define CAMERA_MODEL_XIAO_ESP32S3 // Has PSRAM
 #define TOUCH_INT D7
+
+// 定义I2S引脚（用于音频输出）
+#define I2S_DOUT D0
+#define I2S_BCLK D2
+#define I2S_LRC D9
 
 // // WiFi和API配置
 const char* ssid = "2nd-curv";
@@ -54,6 +61,9 @@ int display_mode = 0;               // 0: fullscreen, 1: analysis view
 
 TFT_eSPI tft = TFT_eSPI();
 ArduinoGPTChat chat(apiKey);
+
+// 全局声明audio变量，用于TTS播放
+Audio audio;
 
 // Pokemon数据库函数实现
 const PokemonData* getPokemonByNumber(uint16_t number) {
@@ -152,6 +162,37 @@ void analyzeImageWithGPT(const char* filename) {
     if(startIdx != -1) {
         pokemonName = pokemonName.substring(startIdx + 9);
         pokemonName.trim();
+    }
+}
+
+// 向LLM询问Pokemon的详细信息并通过TTS播放
+void getPokemonDetailsAndSpeak(String pokemonName) {
+    if (pokemonName.length() == 0) {
+        return;
+    }
+    
+    Serial.println("正在向LLM询问Pokemon的详细信息...");
+    
+    // 构建询问Pokemon详细信息的提示
+    String prompt = "请用不超过60个字简要介绍一下" + pokemonName + "这个宝可梦的特点，包括中文名字，特性，分布。";
+    
+    // 发送询问给LLM
+    String response = chat.sendMessage(prompt);
+    
+    if (response.length() > 0) {
+        Serial.println("LLM回复: " + response);
+        
+        // 使用TTS播放回复
+        Serial.println("正在播放语音...");
+        bool success = chat.textToSpeech(response);
+        
+        if (success) {
+            Serial.println("TTS音频正在通过扬声器播放");
+        } else {
+            Serial.println("播放TTS音频失败");
+        }
+    } else {
+        Serial.println("获取LLM回复失败");
     }
 }
 
@@ -334,6 +375,11 @@ void setup() {
     
     // 使用固定文件名
     
+    // 设置I2S输出引脚（用于TTS播放）
+    audio.setPinout(I2S_BCLK, I2S_LRC, I2S_DOUT);
+    // 设置音量
+    audio.setVolume(100);
+    
     // 打印初始内存使用情况
     printMemoryUsage();
     
@@ -341,6 +387,9 @@ void setup() {
 }
 
 void loop() {
+  // 处理音频循环（TTS播放）
+  audio.loop();
+  
   if( sd_sign && camera_sign){
     if (display_mode == 0) {  // Fullscreen mode
       // Display full-screen live preview
@@ -432,6 +481,9 @@ void loop() {
 
                   // 显示Pokemon图片和信息
                   displayPokemonImage(pokemonName);
+                  
+                  // 向LLM询问Pokemon的详细信息并通过TTS播放
+                  getPokemonDetailsAndSpeak(pokemonName);
               }
               
               // Switch to analysis view

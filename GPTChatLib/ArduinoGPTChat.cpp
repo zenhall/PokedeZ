@@ -442,13 +442,13 @@ String ArduinoGPTChat::sendMessage(String message) {
 
 String ArduinoGPTChat::_buildPayload(String message) {
   DynamicJsonDocument doc(768);
-  doc["model"] = "gpt-4.1-nano";
+  doc["model"] = "gpt-4.1";
   JsonArray messages = doc.createNestedArray("messages");
   
   // 添加系统消息，要求简短回答
   JsonObject sysMsg = messages.createNestedObject();
   sysMsg["role"] = "system";
-  sysMsg["content"] = "请用简短的语言回答问题，回答不要超过30个字。避免过长的解释，直接给出关键信息。";
+  sysMsg["content"] = "请直接回答问题";
   
   // 添加用户消息
   JsonObject userMsg = messages.createNestedObject();
@@ -477,7 +477,7 @@ bool ArduinoGPTChat::textToSpeech(String text) {
     String(_apiKey),     // API密钥
     "gpt-4o-mini-tts",   // 模型
     text,                // 输入文本
-    "alloy",             // 声音
+    "ash",             // 声音
     "mp3",               // 响应格式
     "1.0"                // 语速
   );
