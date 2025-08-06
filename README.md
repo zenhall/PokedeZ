@@ -2,6 +2,8 @@
 
 # PokedeZ - 多模态 Pokemon图鉴
 
+[English](README_EN.md) | 简体中文
+
 <img src="img/img1.png" alt="PokedeZ Preview" width="400">
 
 *基于ESP32-S3的神奇宝贝图鉴设备*
